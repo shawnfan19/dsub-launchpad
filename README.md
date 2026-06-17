@@ -27,7 +27,7 @@ bakes the mandatory `--project / --user-project / --service-account / --network 
 
 **On the Workbench** (the terminal can reach github):
 ```bash
-pip install git+https://github.com/<you>/dsub_launchpad
+pip install git+https://github.com/shawnfan19/dsub-launchpad
 echo 'alias submit=dsubmit' >> ~/.bashrc   # so you type `submit`, same as SLURM
 ```
 `dsubmit` is the console script; the alias makes the *command* identical to the cluster.
