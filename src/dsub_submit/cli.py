@@ -132,18 +132,25 @@ def dockerhub_digest(repo: str, tag: str) -> str:
         with urllib.request.urlopen(url, timeout=20) as resp:
             data = json.load(resp)
     except Exception as e:  # noqa: BLE001 - surface a clear, actionable message
-        raise SystemExit(
+        raise RuntimeError(
             f"could not query Docker Hub for {repo}:{tag} ({e}). "
             "Repo private, tag missing, or no network?"
         )
     digest = data.get("digest")
     if not digest:
-        raise SystemExit(f"no digest for {repo}:{tag} (private repo or missing tag?)")
+        raise RuntimeError(f"no digest for {repo}:{tag} (private repo or missing tag?)")
     return digest
 
 
 def resolve_image(cfg: DsubConfig, dry: bool) -> str:
-    """Build the fully-qualified --image ref, routed through the AoU proxy."""
+    """Build the fully-qualified --image ref, routed through the AoU proxy.
+
+    With resolve_digest, the tag is pinned to an immutable @sha256 at submit time
+    (always-newest + reproducible + proxy-cache-safe). We resolve in dry mode too
+    so the printed command shows the real digest; if Docker Hub is unreachable, a
+    real submit hard-fails (never silently ships a mutable tag) while --dry falls
+    back to :tag with a note.
+    """
     proxy = os.environ.get("ARTIFACT_REGISTRY_DOCKER_REPO")
     if not proxy:
         if not dry:
@@ -160,8 +167,15 @@ def resolve_image(cfg: DsubConfig, dry: bool) -> str:
         raise SystemExit(
             "empty image tag — set tag= or image= (this is the empty-tag bug)"
         )
-    elif cfg.resolve_digest and not dry:
-        ref = f"{cfg.image_repo}@{dockerhub_digest(cfg.image_repo, cfg.tag)}"
+    elif cfg.resolve_digest:
+        try:
+            ref = f"{cfg.image_repo}@{dockerhub_digest(cfg.image_repo, cfg.tag)}"
+        except RuntimeError as e:
+            if not dry:
+                raise SystemExit(str(e))
+            print(f"[dry] {e}")
+            print(f"[dry] showing :{cfg.tag} (a real submit resolves it to @sha256)")
+            ref = f"{cfg.image_repo}:{cfg.tag}"
     else:
         ref = f"{cfg.image_repo}:{cfg.tag}"
 
@@ -259,7 +273,7 @@ def build_job_script(cfg: DsubConfig, script_tokens: list[str]) -> str:
         "#!/bin/bash",
         "set -e",
         "source /entrypoint.sh",  # cd /workspace/Delphi + GPU detect (no .env in container)
-        f"{launcher} {quoted} $OVERRIDE",
+        f"{launcher} {quoted} ${{OVERRIDE:-}}",  # OVERRIDE unset (no sweep) -> empty
     ]
     if cfg.wandb_mode == "offline":
         # Offline wandb writes to $WANDB_DIR/wandb/ (ephemeral on the VM). Push it
@@ -332,9 +346,11 @@ def build_dsub_command(
         image,
         "--logging",
         logging_path,
-        "--timeout",
-        parse_timeout(cfg.time),
     ]
+    # time<=0 omits --timeout -> the job runs to completion (dsub default cap
+    # ~7 days, plus AoU Batch quota). Set a generous time= for long training.
+    if cfg.time and cfg.time > 0:
+        cmd += ["--timeout", parse_timeout(cfg.time)]
     if cfg.job_name:
         cmd += ["--name", sanitize_name(cfg.job_name)]
     if cfg.gpu and cfg.gpu_num > 0:
@@ -504,14 +520,14 @@ def main():
     summary = (
         f"[image:{image.rsplit('/', 1)[-1]} machine:{cfg.machine_type} "
         f"gpu:{cfg.gpu_type if cfg.gpu else 'none'}x{cfg.gpu_num if cfg.gpu else 0} "
-        f"time:{cfg.time}h]"
+        f"time:{f'{cfg.time}h' if cfg.time and cfg.time > 0 else 'uncapped'}]"
     )
     print(f"{summary} {len(combos)} job(s)")
 
     job_ids = []
     try:
         for combo in combos:
-            env_pairs = env_base + [("OVERRIDE", combo)]
+            env_pairs = env_base + ([("OVERRIDE", combo)] if combo else [])
             cmd = build_dsub_command(
                 cfg,
                 image,
