@@ -71,7 +71,7 @@ class DsubConfig:
     # GCS paths / identity (default from environment / .env, all overridable)
     project: Optional[str] = None  # default $GOOGLE_CLOUD_PROJECT
     service_account: Optional[str] = None  # default $GOOGLE_SERVICE_ACCOUNT_EMAIL
-    logging: Optional[str] = None  # default gs://$CKPT_BUCKET/dsub/logs
+    logging: Optional[str] = None  # default gs://misc-$GOOGLE_CLOUD_PROJECT/logs
     data_dir: Optional[str] = (
         None  # -> --env DELPHI_DATA_DIR (default $DELPHI_DATA_DIR)
     )
@@ -468,11 +468,10 @@ def main():
     project = cfg.project or os.environ.get("GOOGLE_CLOUD_PROJECT")
     data_dir = cfg.data_dir or os.environ.get("DELPHI_DATA_DIR")
     ckpt_dir = cfg.ckpt_dir or os.environ.get("DELPHI_CKPT_DIR")
-    ckpt_bucket = os.environ.get("CKPT_BUCKET")
 
-    logging_path = cfg.logging or (
-        f"gs://{ckpt_bucket}/dsub/logs" if ckpt_bucket else None
-    )
+    # Default logs to the workspace's misc bucket (misc-<project>), overridable
+    # via logging=. Follows the <purpose>-<project> bucket convention.
+    logging_path = cfg.logging or (f"gs://misc-{project}/logs" if project else None)
 
     if not cfg.dry:
         missing = [
@@ -481,7 +480,7 @@ def main():
                 ("project/GOOGLE_CLOUD_PROJECT", project),
                 ("data_dir/DELPHI_DATA_DIR", data_dir),
                 ("ckpt_dir/DELPHI_CKPT_DIR", ckpt_dir),
-                ("logging/CKPT_BUCKET", logging_path),
+                ("logging/project", logging_path),
             ]
             if not v
         ]
@@ -495,7 +494,7 @@ def main():
         project = project or "${GOOGLE_CLOUD_PROJECT}"
         data_dir = data_dir or "${DELPHI_DATA_DIR}"
         ckpt_dir = ckpt_dir or "${DELPHI_CKPT_DIR}"
-        logging_path = logging_path or "gs://${CKPT_BUCKET}/dsub/logs"
+        logging_path = logging_path or "gs://misc-${GOOGLE_CLOUD_PROJECT}/logs"
 
     # Invariant: both branches above guarantee these are set (dry -> placeholders,
     # non-dry -> raised on any missing). Narrow for the type checker.

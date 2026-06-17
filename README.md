@@ -76,6 +76,7 @@ data/checkpoint bucket, not a launcher problem.
   bypasses with an explicit ref. An empty tag is rejected (the bug that produces exit 125).
 - **wandb:** Batch VMs have no internet, so `WANDB_MODE=offline` is injected and the run
   dir is pushed to `gs://$CKPT_BUCKET/wandb/` on clean exit.
+- **Logs:** `--logging` defaults to `gs://misc-$GOOGLE_CLOUD_PROJECT/logs` (override with `logging=`).
 - **After submit:** fire-and-forget (no `--wait`); prints each job-id and a ready-to-paste
   `dstat050 ... --status '*'`. Use `wait=true` for a single debug job.
 
