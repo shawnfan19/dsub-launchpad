@@ -1,0 +1,4 @@
+# Example sweep file: one job per value. Use as `sweep.lr=examples/lrs.yaml`.
+- 1.0e-3
+- 3.0e-4
+- 1.0e-4

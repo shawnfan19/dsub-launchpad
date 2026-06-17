@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsub-submit"
+version = "0.1.0"
+description = "dsub (Google Batch / AoU) job submission helper — sibling of slurm_submit"
+requires-python = ">=3.10"
+dependencies = [
+    "omegaconf",
+    "pyyaml",
+]
+
+[project.scripts]
+dsubmit = "dsub_submit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
