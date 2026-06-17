@@ -93,7 +93,7 @@ dsubmit apps/train-delphi-m4.py -- dry=true gpu_num=2 machine_type=n1-standard-8
 
 | Field | Default | Meaning |
 |---|---|---|
-| `time` | `3.0` | walltime hours → `--timeout`; **`time=0` omits it** (run to completion, dsub ~7-day cap) |
+| `time` | `0` (uncapped) | walltime hours → `--timeout`; **default omits it** (run to completion, dsub ~7-day cap). Set e.g. `time=24` to cap. |
 | `gpu` / `gpu_num` / `gpu_type` | `true` / `1` / `t4` | `--accelerator-*`; `gpu_num>1` → `torchrun` |
 | `machine_type` | `n1-standard-8` | `--machine-type` (T4 needs `n1`) |
 | `boot_disk_size` | `80` | GB; must fit the CUDA image + cloudpathlib cache |

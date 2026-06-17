@@ -46,7 +46,7 @@ class DsubConfig:
     dry: bool = False
     script_with_args: str = "apps/train-delphi-m4.py"
     overrides: Optional[str] = None
-    time: float = 3.0  # walltime in hours -> --timeout
+    time: float = 0.0  # walltime hours -> --timeout; 0 = uncapped (run to completion)
     job_name: Optional[str] = None  # -> --name (default: script stem)
     gpu: bool = True
     gpu_num: int = 1  # -> --accelerator-count (and torchrun --nproc-per-node if >1)
