@@ -36,9 +36,21 @@ print("forwarded CKPT =", os.environ.get("DELPHI_CKPT_DIR"))
 print("resolved  DATA =", env.DELPHI_DATA_DIR)
 print("resolved  CKPT =", env.DELPHI_CKPT_DIR)
 
-# READ test (deterministic file; avoids the flaky cloned-bucket listing).
-labels = AnyPath(env.DELPHI_DATA_DIR) / "aou_uk" / "labels_chapters_colours.csv"
-print("READ ok:", labels.read_text().splitlines()[0][:60])
+# READ test: list the data dir (proves list auth) then read the first object
+# found (proves get auth) — no assumption about which files exist in the bucket.
+data = AnyPath(env.DELPHI_DATA_DIR)
+top = list(data.iterdir())
+print("READ/list ok:", [p.name for p in top[:10]] or "(empty)")
+target = next((p for p in top if p.is_file()), None)
+if target is None:
+    for d in (p for p in top if p.is_dir()):
+        target = next((p for p in d.iterdir() if p.is_file()), None)
+        if target:
+            break
+if target is not None:
+    print("READ file ok:", target.name, f"({len(target.read_bytes())} bytes)")
+else:
+    print("READ file: list worked but found no object to read")
 
 # WRITE test (the checkpoint bucket, exactly what the patched Checkpointer uses).
 probe = AnyPath(env.DELPHI_CKPT_DIR) / "dsub_verify_probe.txt"
