@@ -65,8 +65,9 @@ data/checkpoint bucket, not a launcher problem.
 - **I/O is fully GCS-native** (no `--input`/`--output` staging): `DELPHI_DATA_DIR`,
   `DELPHI_CKPT_DIR`, `GOOGLE_CLOUD_PROJECT`, `DELPHI_DATASET`, `WANDB_MODE` are forwarded
   into the container via `--env` (an allowlist — no secrets). Reads come straight from
-  `gs://` (AoU readers are cloudpathlib-native); checkpoints write straight to `gs://`
-  (requires the `Checkpointer` patch in `delphi/log.py`).
+  `gs://` (AoU readers are cloudpathlib-native); checkpoints **and** training logs
+  (wandb/tb) write straight to `gs://` from inside Delphi (`delphi/log.py`), so there is
+  nothing to delocalize after the run.
 - **`.env` defaults:** values are read from `.env` (default `./.env` then
   `~/repos/delphi/.env`, override with `env_file=`) using the same `setdefault` semantics
   as `delphi.env.load_env_file`, so it doesn't depend on your shell having sourced it.
@@ -74,8 +75,12 @@ data/checkpoint bucket, not a launcher problem.
   to an immutable `@sha256` digest via the Docker Hub API at submit time
   (`resolve_digest=true`) — always-newest *and* reproducible / proxy-cache-safe. `image=`
   bypasses with an explicit ref. An empty tag is rejected (the bug that produces exit 125).
-- **wandb:** Batch VMs have no internet, so `WANDB_MODE=offline` is injected and the run
-  dir is pushed to `gs://$CKPT_BUCKET/wandb/` on clean exit.
+- **wandb / tensorboard:** Batch VMs have no internet, so `WANDB_MODE=offline` (+
+  `WANDB_DIR=/tmp/wandb`) is injected. Delphi's logging backend pushes its own run dir to
+  `gs://$DELPHI_CKPT_DIR/<ckpt_dir>/<run>/{wandb,tb}/` at the checkpoint cadence —
+  mid-run and crash-safe. The launcher no longer uploads after the run (it used to push
+  the wandb dir on clean exit); the mechanism now lives in `delphi/log.py`
+  `Logger.flush_to_gcs`.
 - **Logs:** `--logging` defaults to `gs://misc-$GOOGLE_CLOUD_PROJECT/logs` (override with `logging=`).
 - **After submit:** fire-and-forget (no `--wait`); prints each job-id and a ready-to-paste
   `dstat050 ... --status '*'`. Use `wait=true` for a single debug job.

@@ -275,24 +275,11 @@ def build_job_script(cfg: DsubConfig, script_tokens: list[str]) -> str:
         "source /entrypoint.sh",  # cd /workspace/Delphi + GPU detect (no .env in container)
         f"{launcher} {quoted} ${{OVERRIDE:-}}",  # OVERRIDE unset (no sweep) -> empty
     ]
-    if cfg.wandb_mode == "offline":
-        # Offline wandb writes to $WANDB_DIR/wandb/ (ephemeral on the VM). Push it
-        # to the gs:// checkpoint dir via cloudpathlib — gsutil is NOT in the image,
-        # but cloudpathlib[gs] is. `|| echo` keeps a push hiccup from failing the run;
-        # we do NOT swallow stderr, so failures show in the --logging stream.
-        lines += [
-            "python - <<'PY' || echo '[wandb] offline-dir upload failed (non-fatal)'",
-            "import os",
-            "from cloudpathlib import AnyPath",
-            "src = os.path.join(os.environ.get('WANDB_DIR', '/tmp/wandb'), 'wandb')",
-            "root = os.environ.get('DELPHI_CKPT_DIR')",
-            "if os.path.isdir(src) and root:",
-            "    (AnyPath(root) / 'wandb').upload_from(src)",
-            "    print('[wandb] uploaded offline runs from', src)",
-            "else:",
-            "    print('[wandb] nothing to upload at', src)",
-            "PY",
-        ]
+    # No post-run upload here: Delphi writes its own artifacts to gs:// *during*
+    # the run -- checkpoints via the Checkpointer, and the logging backend
+    # (delphi/log.py Logger.flush_to_gcs) pushes its wandb/tb run dir at the
+    # checkpoint cadence (mid-run + crash-safe). A trailing snippet would only
+    # fire on clean exit, so it has nothing left to do.
     return "\n".join(lines) + "\n"
 
 
