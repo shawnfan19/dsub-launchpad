@@ -76,11 +76,13 @@ data/checkpoint bucket, not a launcher problem.
   (`resolve_digest=true`) — always-newest *and* reproducible / proxy-cache-safe. `image=`
   bypasses with an explicit ref. An empty tag is rejected (the bug that produces exit 125).
 - **wandb / tensorboard:** Batch VMs have no internet, so `WANDB_MODE=offline` (+
-  `WANDB_DIR=/tmp/wandb`) is injected. Delphi's logging backend pushes its own run dir to
-  `gs://$DELPHI_CKPT_DIR/<ckpt_dir>/<run>/{wandb,tb}/` at the checkpoint cadence —
-  mid-run and crash-safe. The launcher no longer uploads after the run (it used to push
-  the wandb dir on clean exit); the mechanism now lives in `delphi/log.py`
-  `Logger.flush_to_gcs`.
+  `WANDB_DIR=/tmp/wandb`) is injected. Delphi's logging backend (`delphi/log.py`
+  `Logger.flush_to_gcs`) uploads to gs:// at the checkpoint cadence — mid-run and
+  crash-safe: TB to `gs://$DELPHI_CKPT_DIR/<ckpt_dir>/tb/<run>/` (group-level, so
+  `tensorboard --logdir <ckpt_dir>/tb` compares every run in the group), and the wandb
+  offline dir to a single `gs://$DELPHI_CKPT_DIR/wandb/<offline-run>/` (wandb groups by
+  project/name in its UI, so the on-disk location is just for bulk sync). The launcher no
+  longer uploads after the run (it used to push the wandb dir on clean exit).
 - **Logs:** `--logging` defaults to `gs://misc-$GOOGLE_CLOUD_PROJECT/logs` (override with `logging=`).
 - **After submit:** fire-and-forget (no `--wait`); prints each job-id and a ready-to-paste
   monitor command. Check status with **`dqueue [JOB_ID ...]`** — a thin `dstat050` wrapper
