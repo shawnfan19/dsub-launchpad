@@ -291,6 +291,10 @@ def build_env_pairs(
         ("DELPHI_DATA_DIR", data_dir),
         ("DELPHI_CKPT_DIR", ckpt_dir),
         ("DELPHI_DATASET", cfg.dataset),
+        # unbuffered stdout: training prints land in the gs:// log on dsub's
+        # periodic --log-interval copies instead of waiting for the ~8 KB block
+        # buffer (or process exit) to flush. stderr is already line-buffered.
+        ("PYTHONUNBUFFERED", "1"),
     ]
     if cfg.wandb_mode:
         pairs.append(("WANDB_MODE", cfg.wandb_mode))

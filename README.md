@@ -63,7 +63,7 @@ data/checkpoint bucket, not a launcher problem.
   jobs**. dsub has no positional passthrough, so each combo is injected as
   `--env OVERRIDE="k=v ..."` and the job runs `python <script> $OVERRIDE`.
 - **I/O is fully GCS-native** (no `--input`/`--output` staging): `DELPHI_DATA_DIR`,
-  `DELPHI_CKPT_DIR`, `GOOGLE_CLOUD_PROJECT`, `DELPHI_DATASET`, `WANDB_MODE` are forwarded
+  `DELPHI_CKPT_DIR`, `GOOGLE_CLOUD_PROJECT`, `DELPHI_DATASET`, `WANDB_MODE`, `PYTHONUNBUFFERED` are forwarded
   into the container via `--env` (an allowlist — no secrets). Reads come straight from
   `gs://` (AoU readers are cloudpathlib-native); checkpoints **and** training logs
   (wandb/tb) write straight to `gs://` from inside Delphi (`delphi/log.py`), so there is
