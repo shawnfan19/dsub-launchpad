@@ -83,7 +83,9 @@ data/checkpoint bucket, not a launcher problem.
   `Logger.flush_to_gcs`.
 - **Logs:** `--logging` defaults to `gs://misc-$GOOGLE_CLOUD_PROJECT/logs` (override with `logging=`).
 - **After submit:** fire-and-forget (no `--wait`); prints each job-id and a ready-to-paste
-  `dstat050 ... --status '*'`. Use `wait=true` for a single debug job.
+  monitor command. Check status with **`dqueue [JOB_ID ...]`** — a thin `dstat050` wrapper
+  with the invariant AoU flags baked in (no args lists all your jobs; ids show `--full`
+  detail). Or `wait=true` for a single blocking debug job.
 
 ## Dry run
 

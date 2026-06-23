@@ -551,5 +551,50 @@ def main():
         )
 
 
+# --------------------------------------------------------------------------- #
+# dqueue: thin dstat050 wrapper (sibling console script, ~ SLURM squeue)
+# --------------------------------------------------------------------------- #
+def _build_dstat_cmd(ids: list[str], project: str, region: str, user: str) -> list[str]:
+    """The invariant AoU dstat050 invocation. With job ids -> those jobs in
+    --full detail; without -> all of `user`'s jobs (summary table)."""
+    cmd = [
+        "dstat050",
+        "--provider", "google-batch",
+        "--project", project,
+        "--location", region,
+        "--users", user,
+        "--status", "*",
+    ]
+    if ids:
+        cmd += ["--jobs", *ids, "--full"]
+    return cmd
+
+
+def dqueue():
+    """`dqueue [JOB_ID ...]` -- dstat050 for AoU Batch with the invariant flags baked in.
+
+    No args -> all your jobs (summary); with ids -> those jobs, --full. Mirrors the
+    monitor line `dsubmit` prints after launching.
+    """
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if not project:
+        raise SystemExit(
+            "GOOGLE_CLOUD_PROJECT unset — run on the AoU Workbench (or `source .env`)."
+        )
+    # ponytail: region hardcoded to the AoU default (matches the launcher's
+    # `regions` default); add a flag if you ever submit to another region.
+    cmd = _build_dstat_cmd(
+        ids=sys.argv[1:],
+        project=project,
+        region="us-central1",
+        user=os.environ.get("USER", "jupyter"),
+    )
+    print("+ " + " ".join(shlex.quote(c) for c in cmd), file=sys.stderr)
+    try:
+        os.execvp(cmd[0], cmd)  # replace process: stream output, propagate exit code
+    except FileNotFoundError:
+        raise SystemExit(f"{cmd[0]} not found on PATH — is dsub 0.5.0 (dsub050) installed?")
+
+
 if __name__ == "__main__":
     main()
