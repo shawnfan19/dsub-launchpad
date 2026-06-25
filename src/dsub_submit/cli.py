@@ -23,6 +23,7 @@ import sys
 import tempfile
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -556,48 +557,112 @@ def main():
 
 
 # --------------------------------------------------------------------------- #
-# dqueue: thin dstat050 wrapper (sibling console script, ~ SLURM squeue)
+# dqueue: dstat050 wrapper (sibling console script, ~ SLURM squeue / scontrol)
 # --------------------------------------------------------------------------- #
-def _build_dstat_cmd(ids: list[str], project: str, region: str, user: str) -> list[str]:
-    """The invariant AoU dstat050 invocation. With job ids -> those jobs in
-    --full detail; without -> all of `user`'s jobs (summary table)."""
-    cmd = [
+def _dstat_base(project: str, region: str, user: str, status: str) -> list[str]:
+    """The invariant AoU dstat050 invocation, minus the per-mode tail."""
+    # ponytail: region hardcoded to the AoU default (matches the launcher's
+    # `regions` default); add a flag if you ever submit to another region.
+    return [
         "dstat050",
         "--provider", "google-batch",
         "--project", project,
         "--location", region,
         "--users", user,
-        "--status", "*",
+        "--status", status,
     ]
-    if ids:
-        cmd += ["--jobs", *ids, "--full"]
-    return cmd
+
+
+def _fmt_duration(secs: int) -> str:
+    """Compact age like SLURM: 1d2h / 3h4m / 5m6s / 7s. Clamps negatives to 0s."""
+    secs = max(0, int(secs))
+    d, secs = divmod(secs, 86400)
+    h, secs = divmod(secs, 3600)
+    m, s = divmod(secs, 60)
+    if d:
+        return f"{d}d{h}h"
+    if h:
+        return f"{h}h{m}m"
+    if m:
+        return f"{m}m{s}s"
+    return f"{s}s"
+
+
+def _fmt_age(create_time: str) -> str:
+    """age = now - create-time. dstat serializes naive local-tz timestamps
+    (`%Y-%m-%d %H:%M:%S.%f`), so a naive datetime.now() diff is correct."""
+    try:
+        t = datetime.strptime(create_time, "%Y-%m-%d %H:%M:%S.%f")
+    except (ValueError, TypeError):
+        return "?"
+    return _fmt_duration((datetime.now() - t).total_seconds())
+
+
+def _render_status_table(tasks: list[dict]) -> str:
+    """One row per dstat task -> aligned JOB ID / NAME / STATUS / AGE table.
+    (dstat's own text table omits the job-id you need to act on a job.)"""
+    cols = ["JOB ID", "NAME", "STATUS", "AGE"]
+    rows = [
+        [
+            str(t.get("job-id", "")),
+            str(t.get("job-name", "")),
+            str(t.get("status", "")),
+            _fmt_age(t.get("create-time", "")),
+        ]
+        for t in tasks
+    ]
+    widths = [
+        max(len(cols[i]), *(len(r[i]) for r in rows)) if rows else len(cols[i])
+        for i in range(len(cols))
+    ]
+    fmt = lambda cells: "  ".join(c.ljust(w) for c, w in zip(cells, widths))
+    return "\n".join([fmt(cols)] + [fmt(r) for r in rows])
 
 
 def dqueue():
-    """`dqueue [JOB_ID ...]` -- dstat050 for AoU Batch with the invariant flags baked in.
+    """`dqueue [JOB_ID ... | all]` -- dstat050 for AoU Batch, invariant flags baked in.
 
-    No args -> all your jobs (summary); with ids -> those jobs, --full. Mirrors the
-    monitor line `dsubmit` prints after launching.
+    - no args  -> table of your RUNNING jobs (JOB ID / NAME / STATUS / AGE), ~ squeue
+    - `all`    -> same table, every status (history)
+    - JOB_ID.. -> those jobs in --full detail, ~ scontrol show job
     """
     project = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project:
         raise SystemExit(
             "GOOGLE_CLOUD_PROJECT unset — run on the AoU Workbench (or `source .env`)."
         )
-    # ponytail: region hardcoded to the AoU default (matches the launcher's
-    # `regions` default); add a flag if you ever submit to another region.
-    cmd = _build_dstat_cmd(
-        ids=sys.argv[1:],
-        project=project,
-        region="us-central1",
-        user=os.environ.get("USER", "jupyter"),
+    base = lambda status: _dstat_base(
+        project, region="us-central1",
+        user=os.environ.get("USER", "jupyter"), status=status,
     )
+    args = sys.argv[1:]
+
+    # Detail view: explicit job ids -> --full YAML, streamed (status=* so it
+    # finds the job whatever state it's in). Mirrors dsubmit's monitor line.
+    if args and args[0] not in ("all", "-a", "--all"):
+        cmd = base("*") + ["--jobs", *args, "--full"]
+        print("+ " + " ".join(shlex.quote(c) for c in cmd), file=sys.stderr)
+        try:
+            os.execvp(cmd[0], cmd)  # replace process: stream output, propagate exit
+        except FileNotFoundError:
+            raise SystemExit(f"{cmd[0]} not found on PATH — is dsub050 installed?")
+
+    # Table view: parse JSON (job-id/status/create-time only exist under --full).
+    status = "*" if args else "RUNNING"
+    cmd = base(status) + ["--full", "--format", "json"]
     print("+ " + " ".join(shlex.quote(c) for c in cmd), file=sys.stderr)
     try:
-        os.execvp(cmd[0], cmd)  # replace process: stream output, propagate exit code
+        result = subprocess.run(cmd, capture_output=True, text=True)
     except FileNotFoundError:
-        raise SystemExit(f"{cmd[0]} not found on PATH — is dsub 0.5.0 (dsub050) installed?")
+        raise SystemExit(f"{cmd[0]} not found on PATH — is dsub050 installed?")
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        raise SystemExit(result.returncode)
+    tasks = json.loads(result.stdout or "[]")
+    if not tasks:
+        print("no jobs" if args else "no running jobs")
+        return
+    print(_render_status_table(tasks))
 
 
 if __name__ == "__main__":
