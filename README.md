@@ -85,9 +85,12 @@ data/checkpoint bucket, not a launcher problem.
   longer uploads after the run (it used to push the wandb dir on clean exit).
 - **Logs:** `--logging` defaults to `gs://misc-$GOOGLE_CLOUD_PROJECT/logs` (override with `logging=`).
 - **After submit:** fire-and-forget (no `--wait`); prints each job-id and a ready-to-paste
-  monitor command. Check status with **`dqueue [JOB_ID ...]`** — a thin `dstat050` wrapper
-  with the invariant AoU flags baked in (no args lists all your jobs; ids show `--full`
-  detail). Or `wait=true` for a single blocking debug job.
+  monitor command. Check status with **`dqueue`** — a thin `dstat050` wrapper with the
+  invariant AoU flags baked in (no args = a `squeue`-like table of your RUNNING jobs:
+  JOB ID / NAME / STATUS / AGE; `dqueue all` = every status; `dqueue JOB_ID ...` = `--full`
+  detail). See a job's output with **`dpeek JOB_ID`** — `gsutil cat` of its stdout log
+  (`dpeek JOB_ID err|log` for stderr/combined; pipe to `tail`/`grep`). Or `wait=true` for a
+  single blocking debug job.
 
 ## Dry run
 

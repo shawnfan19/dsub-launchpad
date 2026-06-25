@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 dsubmit = "dsub_submit.cli:main"
 dqueue = "dsub_submit.cli:dqueue"
+dpeek = "dsub_submit.cli:dpeek"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -573,7 +573,7 @@ def _dstat_base(project: str, region: str, user: str, status: str) -> list[str]:
     ]
 
 
-def _fmt_duration(secs: int) -> str:
+def _fmt_duration(secs: float) -> str:
     """Compact age like SLURM: 1d2h / 3h4m / 5m6s / 7s. Clamps negatives to 0s."""
     secs = max(0, int(secs))
     d, secs = divmod(secs, 86400)
@@ -663,6 +663,56 @@ def dqueue():
         print("no jobs" if args else "no running jobs")
         return
     print(_render_status_table(tasks))
+
+
+# --------------------------------------------------------------------------- #
+# dpeek: stream a job's GCS log to the terminal (dsub ships no log viewer)
+# --------------------------------------------------------------------------- #
+_PEEK_STREAMS = {"out": "-stdout", "err": "-stderr", "log": ""}  # -> filename suffix
+
+
+def _peek_uri(logging_dir: str, job_id: str, stream: str) -> str:
+    """dsub's fixed log naming: <logging-dir>/<job-id>{-stdout,-stderr,}.log."""
+    return f"{logging_dir.rstrip('/')}/{job_id}{_PEEK_STREAMS[stream]}.log"
+
+
+def dpeek():
+    """`dpeek JOB_ID [out|err|log] [logging=gs://...]` -- cat a job's GCS log.
+
+    dsub has no log viewer; logs land at <logging>/<job-id>{,-stdout,-stderr}.log.
+    Defaults to the stdout log (training output). Uses the workspace default log
+    dir (gs://misc-$GOOGLE_CLOUD_PROJECT/logs) — the launcher's default; if you
+    submitted with a non-default logging= path, pass the same logging=gs://... here.
+    Pipe it like any cat: `dpeek JOB_ID | tail -50`, `dpeek JOB_ID | grep loss`.
+    """
+    logging_dir = None
+    rest = []
+    for a in sys.argv[1:]:
+        if a.startswith("logging="):
+            logging_dir = a[len("logging=") :]
+        else:
+            rest.append(a)
+    if not rest:
+        raise SystemExit("usage: dpeek JOB_ID [out|err|log] [logging=gs://...]")
+    job_id, stream = rest[0], (rest[1] if len(rest) > 1 else "out")
+    if stream not in _PEEK_STREAMS:
+        raise SystemExit(
+            f"unknown stream {stream!r}; use one of {'|'.join(_PEEK_STREAMS)}"
+        )
+    if not logging_dir:
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+        if not project:
+            raise SystemExit(
+                "GOOGLE_CLOUD_PROJECT unset — run on the Workbench (or `source .env`), "
+                "or pass logging=gs://..."
+            )
+        logging_dir = f"gs://misc-{project}/logs"
+    cmd = ["gsutil", "cat", _peek_uri(logging_dir, job_id, stream)]
+    print("+ " + " ".join(shlex.quote(c) for c in cmd), file=sys.stderr)
+    try:
+        os.execvp(cmd[0], cmd)  # stream the (possibly large/growing) log directly
+    except FileNotFoundError:
+        raise SystemExit("gsutil not found on PATH — run on the AoU Workbench.")
 
 
 if __name__ == "__main__":
