@@ -94,10 +94,13 @@ class DsubConfig:
 # --------------------------------------------------------------------------- #
 # .env loading (acquisition mode B: don't depend on the submitter's shell)
 # --------------------------------------------------------------------------- #
-def load_env_file(env_file: Optional[str]) -> Optional[Path]:
+def load_env_file(env_file: Optional[str]) -> tuple[Optional[Path], list[str]]:
     """Populate os.environ from a .env, mirroring delphi.env.load_env_file semantics.
 
-    os.environ wins on conflict (setdefault). Returns the file used, or None.
+    os.environ wins on conflict (setdefault). Returns (file used or None, keys
+    declared in that file). The key list drives which vars get forwarded into the
+    container (see build_env_pairs): we forward the file's OWN keys, never the whole
+    process environment, which holds PATH/HOME/... that would clobber the image.
     """
     if env_file:
         candidates = [Path(env_file).expanduser()]
@@ -106,6 +109,7 @@ def load_env_file(env_file: Optional[str]) -> Optional[Path]:
     for path in candidates:
         if not path.is_file():
             continue
+        keys = []
         for raw in path.read_text().splitlines():
             line = raw.strip()
             if not line or line.startswith("#"):
@@ -119,8 +123,9 @@ def load_env_file(env_file: Optional[str]) -> Optional[Path]:
             if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
                 value = value[1:-1]
             os.environ.setdefault(key, value)
-        return path
-    return None
+            keys.append(key)
+        return path, keys
+    return None, []
 
 
 # --------------------------------------------------------------------------- #
@@ -285,7 +290,7 @@ def build_job_script(cfg: DsubConfig, script_tokens: list[str]) -> str:
 
 
 def build_env_pairs(
-    cfg: DsubConfig, project, data_dir, ckpt_dir
+    cfg: DsubConfig, project, data_dir, ckpt_dir, env_keys=()
 ) -> list[tuple[str, str]]:
     pairs = [
         ("GOOGLE_CLOUD_PROJECT", project),
@@ -301,6 +306,16 @@ def build_env_pairs(
         pairs.append(("WANDB_MODE", cfg.wandb_mode))
         if cfg.wandb_mode == "offline":
             pairs.append(("WANDB_DIR", "/tmp/wandb"))
+    # Forward the remaining vars declared in the .env file (project-agnostic; no
+    # DELPHI_ prefix assumption). DEDUP against the keys resolved above so the
+    # resolved value wins and we never emit a duplicate --env -- otherwise the raw
+    # .env value would clobber a cfg.data_dir/ckpt_dir/project CLI override.
+    # Forward the EFFECTIVE value (os.environ; shell wins over .env).
+    resolved = {k for k, _ in pairs}
+    for k in env_keys:
+        if k in resolved:
+            continue
+        pairs.append((k, os.environ.get(k, "")))
     return [(k, v) for k, v in pairs if v]
 
 
@@ -453,7 +468,7 @@ def main():
         cfg.job_name = Path(script_tokens[0]).stem
 
     # Acquisition mode B: load .env ourselves so we don't depend on the shell.
-    used = load_env_file(cfg.env_file)
+    used, env_keys = load_env_file(cfg.env_file)
     if used:
         print(f"loaded env defaults from {used}")
 
@@ -494,7 +509,7 @@ def main():
 
     image = resolve_image(cfg, cfg.dry)
     service_account = resolve_service_account(cfg, cfg.dry)
-    env_base = build_env_pairs(cfg, project, data_dir, ckpt_dir)
+    env_base = build_env_pairs(cfg, project, data_dir, ckpt_dir, env_keys)
     combos = build_axes(cfg, sweeps)
 
     script_text = build_job_script(cfg, script_tokens)
