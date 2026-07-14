@@ -635,11 +635,13 @@ def _render_status_table(tasks: list[dict]) -> str:
 
 
 def dqueue():
-    """`dqueue [JOB_ID ... | all]` -- dstat050 for AoU Batch, invariant flags baked in.
+    """`dqueue [JOB_ID ... | all] [N] [age=DUR]` -- dstat050 for AoU Batch, flags baked in.
 
-    - no args  -> table of your RUNNING jobs (JOB ID / NAME / STATUS / AGE), ~ squeue
-    - `all`    -> same table, every status (history)
-    - JOB_ID.. -> those jobs in --full detail, ~ scontrol show job
+    - no args   -> table of your RUNNING jobs (JOB ID / NAME / STATUS / AGE), ~ squeue
+    - `all`     -> same table, every status (history)
+    - `N`       -> cap to the N newest (dstat lists create-time order), e.g. `dqueue all 20`
+    - `age=DUR` -> only jobs newer than DUR (dstat units: 7d, 12h, 1w) — history trimmer
+    - JOB_ID..  -> those jobs in --full detail, ~ scontrol show job
     """
     project = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project:
@@ -650,12 +652,25 @@ def dqueue():
         project, region="us-central1",
         user=os.environ.get("USER", "jupyter"), status=status,
     )
-    args = sys.argv[1:]
+
+    # Pull the table knobs out of argv: a dsub job-id is never all-digits, so a
+    # bare integer is unambiguously the top-N limit; age= mirrors the launcher's k=v.
+    limit = age = None
+    rest = []
+    for a in sys.argv[1:]:
+        if a.isdigit():
+            limit = a
+        elif a.startswith("age="):
+            age = a[len("age=") :]
+        else:
+            rest.append(a)
+    ALL = ("all", "-a", "--all")
+    ids = [a for a in rest if a not in ALL]
 
     # Detail view: explicit job ids -> --full YAML, streamed (status=* so it
     # finds the job whatever state it's in). Mirrors dsubmit's monitor line.
-    if args and args[0] not in ("all", "-a", "--all"):
-        cmd = base("*") + ["--jobs", *args, "--full"]
+    if ids:
+        cmd = base("*") + ["--jobs", *ids, "--full"]
         print("+ " + " ".join(shlex.quote(c) for c in cmd), file=sys.stderr)
         try:
             os.execvp(cmd[0], cmd)  # replace process: stream output, propagate exit
@@ -663,8 +678,12 @@ def dqueue():
             raise SystemExit(f"{cmd[0]} not found on PATH — is dsub050 installed?")
 
     # Table view: parse JSON (job-id/status/create-time only exist under --full).
-    status = "*" if args else "RUNNING"
+    status = "*" if any(a in ALL for a in rest) else "RUNNING"
     cmd = base(status) + ["--full", "--format", "json"]
+    if limit:
+        cmd += ["--limit", limit]
+    if age:
+        cmd += ["--age", age]
     print("+ " + " ".join(shlex.quote(c) for c in cmd), file=sys.stderr)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -675,9 +694,12 @@ def dqueue():
         raise SystemExit(result.returncode)
     tasks = json.loads(result.stdout or "[]")
     if not tasks:
-        print("no jobs" if args else "no running jobs")
+        print("no jobs" if status == "*" else "no running jobs")
         return
     print(_render_status_table(tasks))
+    # Don't let a cap silently hide jobs: flag it when we return exactly `limit`.
+    if limit and len(tasks) == int(limit):
+        print(f"(showing newest {limit}; raise N or add age=DUR for more)", file=sys.stderr)
 
 
 # --------------------------------------------------------------------------- #

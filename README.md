@@ -88,7 +88,9 @@ data/checkpoint bucket, not a launcher problem.
   monitor command. Check status with **`dqueue`** — a thin `dstat050` wrapper with the
   invariant AoU flags baked in (no args = a `squeue`-like table of your RUNNING jobs:
   JOB ID / NAME / STATUS / AGE; `dqueue all` = every status; `dqueue JOB_ID ...` = `--full`
-  detail). See a job's output with **`dpeek JOB_ID`** — `gsutil cat` of its stdout log
+  detail). When history gets long, trim the view: a bare number caps to the newest N
+  (`dqueue all 20`) and `age=DUR` limits by recency (`dqueue all age=7d`) — both are native
+  `dstat` filters. See a job's output with **`dpeek JOB_ID`** — `gsutil cat` of its stdout log
   (`dpeek JOB_ID err|log` for stderr/combined; pipe to `tail`/`grep`). Or `wait=true` for a
   single blocking debug job.
 
