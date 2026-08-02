@@ -31,14 +31,57 @@ import yaml
 from omegaconf import OmegaConf
 from omegaconf.errors import ConfigKeyError
 
-# gpu_type -> dsub --accelerator-type value. AoU's default-quota GPU is t4.
-ACCELERATOR_TYPES = {
-    "t4": "nvidia-tesla-t4",
-    "a100": "nvidia-tesla-a100",
-    "v100": "nvidia-tesla-v100",
-    "p100": "nvidia-tesla-p100",
-    "l4": "nvidia-l4",
+# gpu_type -> (dsub --accelerator-type value, {gpu count: machine type}).
+# GCP couples the GPU to the machine type, in two different ways:
+#   t4/v100 attach to n1-*, capped per GPU count (1 V100 caps at 12 vCPU, so the
+#     ladder grows WITH the count -- n1-standard-16 is illegal with a single V100);
+#   a100/l4 live on a2-*/g2-*, where the count is FIXED by the machine type.
+# A count absent below does not exist in GCP (there is no a2-highgpu-3g).
+# AoU's default-quota GPU is t4; a100 needs approved A100 quota in the workspace.
+GPUS = {
+    "t4": (
+        "nvidia-tesla-t4",
+        {1: "n1-standard-8", 2: "n1-standard-16", 4: "n1-standard-32"},
+    ),
+    "v100": (
+        "nvidia-tesla-v100",
+        {
+            1: "n1-standard-8",
+            2: "n1-standard-16",
+            4: "n1-standard-32",
+            8: "n1-standard-64",
+        },
+    ),
+    "a100": (
+        "nvidia-tesla-a100",
+        {
+            1: "a2-highgpu-1g",
+            2: "a2-highgpu-2g",
+            4: "a2-highgpu-4g",
+            8: "a2-highgpu-8g",
+            16: "a2-megagpu-16g",
+        },
+    ),
+    "a100-80gb": (
+        "nvidia-a100-80gb",  # note: no "-tesla-"; only us-central1-a/-c carry A2 Ultra
+        {
+            1: "a2-ultragpu-1g",
+            2: "a2-ultragpu-2g",
+            4: "a2-ultragpu-4g",
+            8: "a2-ultragpu-8g",
+        },
+    ),
+    "l4": (
+        "nvidia-l4",
+        {
+            1: "g2-standard-8",  # -4 is also legal but halves the vCPU baseline
+            2: "g2-standard-24",
+            4: "g2-standard-48",
+            8: "g2-standard-96",
+        },
+    ),
 }
+CPU_MACHINE_TYPE = "n1-standard-8"  # gpu=false / gpu_num=0
 
 
 @dataclass
@@ -54,7 +97,7 @@ class DsubConfig:
     gpu_type: str = "t4"  # -> --accelerator-type
 
     # --- dsub / AoU specific ---
-    machine_type: str = "n1-standard-8"  # GCP-native sizing (T4 requires n1)
+    machine_type: Optional[str] = None  # None -> derived from gpu_type+gpu_num (GPUS)
     boot_disk_size: int = 80  # GB; must fit the CUDA image + cloudpathlib cache
     regions: str = "us-central1"
     wait: bool = False  # block until the (single) job finishes; for debugging
@@ -319,6 +362,28 @@ def build_env_pairs(
     return [(k, v) for k, v in pairs if v]
 
 
+def resolve_machine_type(cfg: DsubConfig) -> str:
+    """machine_type=None -> derive it from gpu_type+gpu_num, else pass yours through.
+
+    Batch rejects a mismatched pair server-side (n1-standard-8 + a100 is a 400), so
+    deriving is the only way `gpu_type=a100` can work without also knowing GCP's
+    machine-type ladder. An explicit machine_type is never second-guessed.
+    """
+    if cfg.gpu and cfg.gpu_num > 0 and cfg.gpu_type not in GPUS:
+        raise SystemExit(f"unknown gpu_type={cfg.gpu_type!r}; known: {sorted(GPUS)}")
+    if cfg.machine_type:
+        return cfg.machine_type
+    if not (cfg.gpu and cfg.gpu_num > 0):
+        return CPU_MACHINE_TYPE
+    machines = GPUS[cfg.gpu_type][1]
+    if cfg.gpu_num not in machines:
+        raise SystemExit(
+            f"gpu_type={cfg.gpu_type} has no {cfg.gpu_num}-GPU machine type on GCP; "
+            f"valid gpu_num: {sorted(machines)} (or set machine_type= yourself)"
+        )
+    return machines[cfg.gpu_num]
+
+
 def build_dsub_command(
     cfg: DsubConfig,
     image: str,
@@ -361,13 +426,14 @@ def build_dsub_command(
     if cfg.job_name:
         cmd += ["--name", sanitize_name(cfg.job_name)]
     if cfg.gpu and cfg.gpu_num > 0:
-        if cfg.gpu_type not in ACCELERATOR_TYPES:
-            raise SystemExit(
-                f"unknown gpu_type={cfg.gpu_type!r}; known: {sorted(ACCELERATOR_TYPES)}"
-            )
+        # Keep both flags even on a2-*/g2-*, where the machine type already implies
+        # the GPU count: --accelerator-type is the ONLY thing that flips Batch's
+        # installGpuDrivers (dsub 0.5.0 google_batch.py:761), so dropping it as
+        # "redundant" yields a GPU VM with no NVIDIA driver. Verified against the
+        # emitted proto -- Batch accepts a spec that matches the machine type.
         cmd += [
             "--accelerator-type",
-            ACCELERATOR_TYPES[cfg.gpu_type],
+            GPUS[cfg.gpu_type][0],
             "--accelerator-count",
             str(cfg.gpu_num),
         ]
@@ -466,6 +532,8 @@ def main():
         )
     if not cfg.job_name:
         cfg.job_name = Path(script_tokens[0]).stem
+    # Resolve before the summary/dry printout so both show the machine type Batch gets.
+    cfg.machine_type = resolve_machine_type(cfg)
 
     # Acquisition mode B: load .env ourselves so we don't depend on the shell.
     used, env_keys = load_env_file(cfg.env_file)

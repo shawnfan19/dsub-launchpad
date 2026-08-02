@@ -43,11 +43,14 @@ pip install -e /hps/software/users/birney/sfan/dsub_launchpad
 # cluster (SLURM)
 submit apps/train-delphi-m4.py batch_size=128 -- time=5 memory=64  gpu_num=1 sweep.lr=lrs.yaml
 # Workbench (dsub)   ← after `source .env`
-submit apps/train-delphi-m4.py batch_size=128 -- time=5 machine_type=n1-standard-8 gpu_num=1 sweep.lr=lrs.yaml
+submit apps/train-delphi-m4.py batch_size=128 -- time=5 gpu_num=1 sweep.lr=lrs.yaml
 ```
 The only divergence is `memory=` → `machine_type=` (GCP predefined machine types couple
-RAM:vCPU, and T4 GPUs require the `n1` family). `time`, `gpu`/`gpu_num`/`gpu_type`,
-`sweep.*`, `overrides=`, `dry`, `job_name` are identical.
+RAM:vCPU, so you pick a shape rather than a number). You rarely need it: `machine_type`
+defaults to auto, derived from `gpu_type`+`gpu_num`, because GCP ties the two together —
+`t4`/`v100` need the `n1` family, `a100` needs `a2-*`, `l4` needs `g2-*`, and on `a2`/`g2`
+the machine type *is* the GPU count. `time`, `gpu`/`gpu_num`/`gpu_type`, `sweep.*`,
+`overrides=`, `dry`, `job_name` are identical.
 
 ## Verify GCS access first (once per workspace)
 
@@ -100,7 +103,14 @@ data/checkpoint bucket, not a launcher problem.
 submitting (and tolerates a machine without the AoU env, for debugging on the cluster):
 
 ```bash
-dsubmit apps/train-delphi-m4.py -- dry=true gpu_num=2 machine_type=n1-standard-8 sweep.lr='[1e-3,1e-4]'
+dsubmit apps/train-delphi-m4.py -- dry=true gpu_num=2 sweep.lr='[1e-3,1e-4]'   # → n1-standard-16
+```
+
+It's also the cheapest way to check what a GPU request resolves to before you queue it:
+
+```bash
+dsubmit train.py -- dry=true gpu_type=a100 gpu_num=2   # → machine:a2-highgpu-2g
+dsubmit train.py -- dry=true gpu_type=a100 gpu_num=3   # → fails locally: valid gpu_num [1, 2, 4, 8, 16]
 ```
 
 ## Config reference (`DsubConfig`)
@@ -108,8 +118,8 @@ dsubmit apps/train-delphi-m4.py -- dry=true gpu_num=2 machine_type=n1-standard-8
 | Field | Default | Meaning |
 |---|---|---|
 | `time` | `0` (uncapped) | walltime hours → `--timeout`; **default omits it** (run to completion, dsub ~7-day cap). Set e.g. `time=24` to cap. |
-| `gpu` / `gpu_num` / `gpu_type` | `true` / `1` / `t4` | `--accelerator-*`; `gpu_num>1` → `torchrun` |
-| `machine_type` | `n1-standard-8` | `--machine-type` (T4 needs `n1`) |
+| `gpu` / `gpu_num` / `gpu_type` | `true` / `1` / `t4` | `--accelerator-*`; `gpu_num>1` → `torchrun`. `gpu_type` ∈ `t4`, `v100`, `a100`, `a100-80gb`, `l4` |
+| `machine_type` | auto | `--machine-type`, derived from `gpu_type`+`gpu_num` (see `GPUS` in `cli.py`); set it to override. A `gpu_num` with no matching GCP shape fails locally |
 | `boot_disk_size` | `80` | GB; must fit the CUDA image + cloudpathlib cache |
 | `image_repo` / `tag` / `resolve_digest` / `image` | `shawnclarkefan/delphi` / `latest` / `true` / – | image + digest pinning |
 | `job_name` | script stem | `--name` |
