@@ -96,6 +96,13 @@ data/checkpoint bucket, not a launcher problem.
   `dstat` filters. See a job's output with **`dpeek JOB_ID`** — `gsutil cat` of its stdout log
   (`dpeek JOB_ID err|log` for stderr/combined; pipe to `tail`/`grep`). Or `wait=true` for a
   single blocking debug job.
+- **Killing jobs:** **`dkill JOB_ID ...`** — a `ddel050` wrapper (~ `scancel`). `dkill
+  name=SUBSTR` kills every running job whose name matches and `dkill all` kills all of
+  yours; both print the table first and prompt, since a sweep's GPU-hours can hide behind
+  one substring. Two `ddel` behaviours to expect: it blocks until Batch has torn the VM
+  down (Ctrl-C only abandons the wait — the delete is already sent), and it *deletes* the
+  Batch job, so the job then disappears from `dqueue all` rather than showing as CANCELED.
+  The GCS logs survive, so `dpeek JOB_ID` still works afterwards.
 
 ## Dry run
 

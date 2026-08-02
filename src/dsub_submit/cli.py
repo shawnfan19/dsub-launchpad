@@ -820,5 +820,106 @@ def dpeek():
         raise SystemExit("gsutil not found on PATH — run on the AoU Workbench.")
 
 
+# --------------------------------------------------------------------------- #
+# dkill: ddel050 wrapper (sibling console script, ~ SLURM scancel)
+# --------------------------------------------------------------------------- #
+def _ddel_base(project: str, region: str, user: str) -> list[str]:
+    """The invariant AoU ddel050 invocation, minus the --jobs tail.
+
+    ddel would default --users to the OS user and --location to us-central1, but
+    pass both: it keeps this in step with _dstat_base, so the set dkill deletes is
+    always the set dqueue showed you.
+    """
+    return [
+        "ddel050",
+        "--provider", "google-batch",
+        "--project", project,
+        "--location", region,
+        "--users", user,
+    ]
+
+
+def _running_jobs(project: str, user: str) -> list[dict]:
+    """Your RUNNING jobs as dstat task dicts (job-id/job-name/status/create-time)."""
+    cmd = _dstat_base(project, "us-central1", user, "RUNNING") + [
+        "--full", "--format", "json",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise SystemExit(f"{cmd[0]} not found on PATH — is dsub050 installed?")
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        raise SystemExit(result.returncode)
+    return json.loads(result.stdout or "[]")
+
+
+def _parse_kill_args(args: list[str]) -> tuple[Optional[str], list[str]]:
+    """`dkill` argv -> (bulk selector, explicit job ids); exactly one side is set.
+
+    Selector is `""` for `all`, a substring for `name=SUBSTR`, or None when explicit
+    job ids were given. Mixing the two is rejected rather than silently ignored --
+    `dkill all JOB_ID` must not quietly delete a different set than you meant.
+    """
+    ALL = ("all", "-a", "--all")
+    names = [a[len("name=") :] for a in args if a.startswith("name=")]
+    bulk = "" if any(a in ALL for a in args) else None
+    ids = [a for a in args if a not in ALL and not a.startswith("name=")]
+    if len(names) > 1 or (names and bulk is not None):
+        raise SystemExit("dkill: pick one of name=SUBSTR or all")
+    selector = names[0] if names else bulk
+    if selector is not None and ids:
+        raise SystemExit(f"dkill: can't combine {'name=' if names else 'all'} with {ids}")
+    if selector is None and not ids:
+        raise SystemExit("usage: dkill JOB_ID... | name=SUBSTR | all")
+    return selector, ids
+
+
+def dkill():
+    """`dkill JOB_ID... | name=SUBSTR | all` -- ddel050 for AoU Batch, ~ scancel.
+
+    - JOB_ID..    -> delete exactly those (no lookup, no prompt: you named them)
+    - name=SUBSTR -> every RUNNING job whose name contains SUBSTR; prompts first
+    - all         -> every RUNNING job of yours; prompts first
+
+    Two ddel behaviours worth knowing: it issues a Batch delete_job and blocks until
+    the LRO completes, so it sits there for as long as the VM takes to tear down (a
+    GPU VM is the slow case) -- Ctrl-C only abandons the wait, the delete is already
+    sent. And because the job resource is deleted, it then vanishes from `dqueue all`
+    entirely; there is no CANCELED row afterwards, only the GCS logs (`dpeek`).
+    """
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if not project:
+        raise SystemExit(
+            "GOOGLE_CLOUD_PROJECT unset — run on the AoU Workbench (or `source .env`)."
+        )
+    user = os.environ.get("USER", "jupyter")
+    selector, ids = _parse_kill_args(sys.argv[1:])
+
+    if selector is not None:
+        tasks = _running_jobs(project, user)
+        tasks = [t for t in tasks if selector in str(t.get("job-name", ""))]
+        if not tasks:
+            print(f"no running jobs matching {selector!r}" if selector else "no running jobs")
+            return
+        ids = list(dict.fromkeys(str(t["job-id"]) for t in tasks))
+        print(_render_status_table(tasks))
+        # Irreversible (delete_job drops the resource), and a sweep's worth of GPU
+        # hours can hide behind one substring -- show the set, then ask.
+        if not sys.stdin.isatty():
+            raise SystemExit(
+                f"refusing to delete {len(ids)} job(s) non-interactively; pass explicit job ids"
+            )
+        if input(f"delete {len(ids)} job(s)? [y/N] ").strip().lower() not in ("y", "yes"):
+            raise SystemExit("aborted")
+
+    cmd = _ddel_base(project, "us-central1", user) + ["--jobs", *ids]
+    print("+ " + " ".join(shlex.quote(c) for c in cmd), file=sys.stderr)
+    try:
+        os.execvp(cmd[0], cmd)  # replace process: stream ddel's output, propagate exit
+    except FileNotFoundError:
+        raise SystemExit(f"{cmd[0]} not found on PATH — is dsub050 installed?")
+
+
 if __name__ == "__main__":
     main()

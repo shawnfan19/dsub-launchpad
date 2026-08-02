@@ -16,6 +16,7 @@ dependencies = [
 dsubmit = "dsub_submit.cli:main"
 dqueue = "dsub_submit.cli:dqueue"
 dpeek = "dsub_submit.cli:dpeek"
+dkill = "dsub_submit.cli:dkill"
 
 [tool.setuptools.packages.find]
 where = ["src"]
