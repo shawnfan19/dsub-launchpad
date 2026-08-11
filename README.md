@@ -65,9 +65,11 @@ data/checkpoint bucket, not a launcher problem.
   or a dict of lists) are combined by `itertools.product` into **N independent `dsub050`
   jobs**. dsub has no positional passthrough, so each combo is injected as
   `--env OVERRIDE="k=v ..."` and the job runs `python <script> $OVERRIDE`.
-- **I/O is fully GCS-native** (no `--input`/`--output` staging): `DELPHI_DATA_DIR`,
-  `DELPHI_CKPT_DIR`, `GOOGLE_CLOUD_PROJECT`, `DELPHI_DATASET`, `WANDB_MODE`, `PYTHONUNBUFFERED` are forwarded
-  into the container via `--env` (an allowlist — no secrets). Reads come straight from
+- **I/O is fully GCS-native** (no `--input`/`--output` staging): every var declared in
+  your `.env` is forwarded into the container via `--env` at its effective shell value
+  (the file's own keys only — never the whole process environment), plus generic
+  plumbing (`WANDB_MODE`, `PYTHONUNBUFFERED`). The launcher is payload-agnostic: job
+  vars (`DELPHI_*`, ...) live in the `.env`, not in launcher flags. Reads come straight from
   `gs://` (AoU readers are cloudpathlib-native); checkpoints **and** training logs
   (wandb/tb) write straight to `gs://` from inside Delphi (`delphi/log.py`), so there is
   nothing to delocalize after the run.
@@ -86,7 +88,7 @@ data/checkpoint bucket, not a launcher problem.
   offline dir to a single `gs://$DELPHI_CKPT_DIR/wandb/<offline-run>/` (wandb groups by
   project/name in its UI, so the on-disk location is just for bulk sync). The launcher no
   longer uploads after the run (it used to push the wandb dir on clean exit).
-- **Logs:** `--logging` defaults to `gs://misc-$GOOGLE_CLOUD_PROJECT/logs` (override with `logging=`).
+- **Logs:** `--logging` defaults to `gs://$GCP_BUCKET/logs` (override with `logging=`).
 - **After submit:** fire-and-forget (no `--wait`); prints each job-id and a ready-to-paste
   monitor command. Check status with **`dqueue`** — a thin `dstat050` wrapper with the
   invariant AoU flags baked in (no args = a `squeue`-like table of your RUNNING jobs:
@@ -131,8 +133,7 @@ dsubmit train.py -- dry=true gpu_type=a100 gpu_num=3   # → fails locally: vali
 | `image_repo` / `tag` / `resolve_digest` / `image` | `shawnclarkefan/delphi` / `latest` / `true` / – | image + digest pinning |
 | `job_name` | script stem | `--name` |
 | `overrides` / `sweep.*` | – | fan-out axes |
-| `project` / `service_account` / `logging` / `data_dir` / `ckpt_dir` | from env/`.env` | identity + GCS paths |
-| `dataset` | `aou` | `--env DELPHI_DATASET` |
+| `project` / `service_account` / `logging` | from env/`.env` | identity + log path (machinery vars; job vars are forwarded from `.env`, not flags) |
 | `wandb_mode` | `offline` | `--env WANDB_MODE` |
 | `wait` | `false` | block on the job (debug) |
 | `dry` | `false` | print, don't submit |

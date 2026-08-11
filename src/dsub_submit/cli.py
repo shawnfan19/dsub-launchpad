@@ -115,16 +115,7 @@ class DsubConfig:
     # GCS paths / identity (default from environment / .env, all overridable)
     project: Optional[str] = None  # default $GOOGLE_CLOUD_PROJECT
     service_account: Optional[str] = None  # default $GOOGLE_SERVICE_ACCOUNT_EMAIL
-    logging: Optional[str] = None  # default gs://misc-$GOOGLE_CLOUD_PROJECT/logs
-    data_dir: Optional[str] = (
-        None  # -> --env DELPHI_DATA_DIR (default $DELPHI_DATA_DIR)
-    )
-    ckpt_dir: Optional[str] = (
-        None  # -> --env DELPHI_CKPT_DIR (default $DELPHI_CKPT_DIR)
-    )
-    dataset: str = (
-        "aou"  # -> --env DELPHI_DATASET (explicit; auto-detect over gs:// is flaky)
-    )
+    logging: Optional[str] = None  # default gs://$GCP_BUCKET/logs
     wandb_mode: str = "offline"  # -> --env WANDB_MODE (Batch VMs have no internet)
 
     # AoU plumbing (constant per workspace; rarely overridden)
@@ -332,34 +323,23 @@ def build_job_script(cfg: DsubConfig, script_tokens: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build_env_pairs(
-    cfg: DsubConfig, project, data_dir, ckpt_dir, env_keys=()
-) -> list[tuple[str, str]]:
-    pairs = [
-        ("GOOGLE_CLOUD_PROJECT", project),
-        ("DELPHI_DATA_DIR", data_dir),
-        ("DELPHI_CKPT_DIR", ckpt_dir),
-        ("DELPHI_DATASET", cfg.dataset),
-        # unbuffered stdout: training prints land in the gs:// log on dsub's
-        # periodic --log-interval copies instead of waiting for the ~8 KB block
-        # buffer (or process exit) to flush. stderr is already line-buffered.
-        ("PYTHONUNBUFFERED", "1"),
-    ]
+def build_env_pairs(cfg: DsubConfig, project, env_keys=()) -> list[tuple[str, str]]:
+    """Container env = every var the submitter's .env declares, at its EFFECTIVE
+    value (os.environ; shell wins over the file) — never the whole process
+    environment, which holds PATH/HOME/... that would clobber the image. The
+    launcher is payload-agnostic: job vars (DELPHI_*, ...) belong in the .env;
+    it owns only the resolved project and generic plumbing (wandb, buffering)."""
+    pairs = {k: os.environ.get(k, "") for k in env_keys}
+    pairs["GOOGLE_CLOUD_PROJECT"] = project
+    # unbuffered stdout: training prints land in the gs:// log on dsub's
+    # periodic --log-interval copies instead of waiting for the ~8 KB block
+    # buffer (or process exit) to flush. stderr is already line-buffered.
+    pairs["PYTHONUNBUFFERED"] = "1"
     if cfg.wandb_mode:
-        pairs.append(("WANDB_MODE", cfg.wandb_mode))
+        pairs["WANDB_MODE"] = cfg.wandb_mode
         if cfg.wandb_mode == "offline":
-            pairs.append(("WANDB_DIR", "/tmp/wandb"))
-    # Forward the remaining vars declared in the .env file (project-agnostic; no
-    # DELPHI_ prefix assumption). DEDUP against the keys resolved above so the
-    # resolved value wins and we never emit a duplicate --env -- otherwise the raw
-    # .env value would clobber a cfg.data_dir/ckpt_dir/project CLI override.
-    # Forward the EFFECTIVE value (os.environ; shell wins over .env).
-    resolved = {k for k, _ in pairs}
-    for k in env_keys:
-        if k in resolved:
-            continue
-        pairs.append((k, os.environ.get(k, "")))
-    return [(k, v) for k, v in pairs if v]
+            pairs["WANDB_DIR"] = "/tmp/wandb"
+    return [(k, v) for k, v in pairs.items() if v]
 
 
 def resolve_machine_type(cfg: DsubConfig) -> str:
@@ -540,22 +520,22 @@ def main():
     if used:
         print(f"loaded env defaults from {used}")
 
+    # Machinery vars: what the LAUNCHER itself needs, each an explicit os.environ
+    # read (cfg flag wins). Job vars (DELPHI_*, ...) are not resolved here — they
+    # are forwarded wholesale from the .env by build_env_pairs.
     project = cfg.project or os.environ.get("GOOGLE_CLOUD_PROJECT")
-    data_dir = cfg.data_dir or os.environ.get("DELPHI_DATA_DIR")
-    ckpt_dir = cfg.ckpt_dir or os.environ.get("DELPHI_CKPT_DIR")
 
-    # Default logs to the workspace's misc bucket (misc-<project>), overridable
-    # via logging=. Follows the <purpose>-<project> bucket convention.
-    logging_path = cfg.logging or (f"gs://misc-{project}/logs" if project else None)
+    # Default logs to the workspace's single bucket ($GCP_BUCKET/logs, next to
+    # its data/ and ckpt/ prefixes), overridable via logging=.
+    gcp_bucket = os.environ.get("GCP_BUCKET")
+    logging_path = cfg.logging or (f"gs://{gcp_bucket}/logs" if gcp_bucket else None)
 
     if not cfg.dry:
         missing = [
             n
             for n, v in [
                 ("project/GOOGLE_CLOUD_PROJECT", project),
-                ("data_dir/DELPHI_DATA_DIR", data_dir),
-                ("ckpt_dir/DELPHI_CKPT_DIR", ckpt_dir),
-                ("logging/project", logging_path),
+                ("logging/GCP_BUCKET", logging_path),
             ]
             if not v
         ]
@@ -567,17 +547,18 @@ def main():
             )
     else:  # keep --dry readable on a machine without the AoU env
         project = project or "${GOOGLE_CLOUD_PROJECT}"
-        data_dir = data_dir or "${DELPHI_DATA_DIR}"
-        ckpt_dir = ckpt_dir or "${DELPHI_CKPT_DIR}"
-        logging_path = logging_path or "gs://misc-${GOOGLE_CLOUD_PROJECT}/logs"
+        logging_path = logging_path or "gs://${GCP_BUCKET}/logs"
 
     # Invariant: both branches above guarantee these are set (dry -> placeholders,
     # non-dry -> raised on any missing). Narrow for the type checker.
-    assert project and data_dir and ckpt_dir and logging_path
+    assert project and logging_path
 
     image = resolve_image(cfg, cfg.dry)
     service_account = resolve_service_account(cfg, cfg.dry)
-    env_base = build_env_pairs(cfg, project, data_dir, ckpt_dir, env_keys)
+    env_base = build_env_pairs(cfg, project, env_keys)
+    print("container env (forwarded .env + plumbing):")
+    for k, v in env_base:
+        print(f"  {k}={v}")
     combos = build_axes(cfg, sweeps)
 
     script_text = build_job_script(cfg, script_tokens)
@@ -786,8 +767,8 @@ def dpeek():
 
     dsub has no log viewer; logs land at <logging>/<job-id>{,-stdout,-stderr}.log.
     Defaults to the stdout log (training output). Uses the workspace default log
-    dir (gs://misc-$GOOGLE_CLOUD_PROJECT/logs) — the launcher's default; if you
-    submitted with a non-default logging= path, pass the same logging=gs://... here.
+    dir (gs://$GCP_BUCKET/logs) — the launcher's default; if you submitted with
+    a non-default logging= path, pass the same logging=gs://... here.
     Pipe it like any cat: `dpeek JOB_ID | tail -50`, `dpeek JOB_ID | grep loss`.
     """
     logging_dir = None
@@ -805,13 +786,13 @@ def dpeek():
             f"unknown stream {stream!r}; use one of {'|'.join(_PEEK_STREAMS)}"
         )
     if not logging_dir:
-        project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-        if not project:
+        gcp_bucket = os.environ.get("GCP_BUCKET")
+        if not gcp_bucket:
             raise SystemExit(
-                "GOOGLE_CLOUD_PROJECT unset — run on the Workbench (or `source .env`), "
+                "GCP_BUCKET unset — run on the Workbench (or `source .env`), "
                 "or pass logging=gs://..."
             )
-        logging_dir = f"gs://misc-{project}/logs"
+        logging_dir = f"gs://{gcp_bucket}/logs"
     cmd = ["gsutil", "cat", _peek_uri(logging_dir, job_id, stream)]
     print("+ " + " ".join(shlex.quote(c) for c in cmd), file=sys.stderr)
     try:

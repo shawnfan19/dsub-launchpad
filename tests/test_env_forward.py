@@ -1,6 +1,7 @@
-"""Check cli.build_env_pairs: dedup against the resolved set + forward the
-remaining .env-declared keys (so a raw .env value never duplicates / clobbers a
-resolved one like DELPHI_DATA_DIR)."""
+"""Check cli.build_env_pairs: every .env-declared key is forwarded at its
+effective os.environ value, and the launcher stays payload-agnostic — it
+overwrites only the keys it owns (resolved project, generic plumbing) and
+never emits a duplicate --env."""
 import os
 import sys
 from pathlib import Path
@@ -9,36 +10,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from dsub_submit.cli import DsubConfig, build_env_pairs
 
 
-def test_dedup_and_forward():
-    cfg = DsubConfig()  # dataset="aou", wandb_mode="offline"
+def test_forward_all_env_keys():
+    cfg = DsubConfig()  # wandb_mode="offline"
     os.environ["WORKSPACE_CDR"] = "cdr-x"
-    os.environ["DELPHI_LOG_BACKEND"] = "tensorboard"
-    # .env declares keys that overlap the resolved set + some new ones
+    os.environ["DELPHI_DATASET"] = "aou"
+    os.environ["DELPHI_DATA_DIR"] = "gs://env-data"
+    os.environ["GOOGLE_CLOUD_PROJECT"] = "env-proj"
     env_keys = [
         "GOOGLE_CLOUD_PROJECT",
         "DELPHI_DATA_DIR",
-        "DELPHI_CKPT_DIR",
+        "DELPHI_DATASET",
         "WORKSPACE_CDR",
-        "DELPHI_LOG_BACKEND",
     ]
-    pairs = build_env_pairs(cfg, "proj", "gs://data", "gs://ckpt", env_keys)
+    pairs = build_env_pairs(cfg, "proj", env_keys)
     keys = [k for k, _ in pairs]
     d = dict(pairs)
 
     # no duplicate --env keys
     assert len(keys) == len(set(keys)), keys
-    # resolved values win for the overlapping keys (not the raw .env value)
+    # the launcher-resolved project wins over the raw .env value
     assert d["GOOGLE_CLOUD_PROJECT"] == "proj"
-    assert d["DELPHI_DATA_DIR"] == "gs://data"
-    assert d["DELPHI_CKPT_DIR"] == "gs://ckpt"
-    # the remaining .env vars are forwarded (effective value)
+    # payload vars are forwarded verbatim — the launcher knows nothing about them
+    assert d["DELPHI_DATA_DIR"] == "gs://env-data"
+    assert d["DELPHI_DATASET"] == "aou"
     assert d["WORKSPACE_CDR"] == "cdr-x"
-    assert d["DELPHI_LOG_BACKEND"] == "tensorboard"
-    # constants still present
+    # generic plumbing still present
     assert d["PYTHONUNBUFFERED"] == "1"
     assert d["WANDB_MODE"] == "offline"
 
 
 if __name__ == "__main__":
-    test_dedup_and_forward()
+    test_forward_all_env_keys()
     print("OK")

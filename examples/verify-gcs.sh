@@ -18,7 +18,7 @@
 #     --env DELPHI_CKPT_DIR=$DELPHI_CKPT_DIR \
 #     --env GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT \
 #     --env DELPHI_DATASET=aou \
-#     --logging gs://$CKPT_BUCKET/dsub/logs \
+#     --logging gs://$GCP_BUCKET/logs \
 #     --script examples/verify-gcs.sh --wait
 #
 # VERIFY OK  -> the I/O + auth design is proven; build/run real jobs with confidence.
