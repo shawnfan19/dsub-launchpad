@@ -82,6 +82,10 @@ GPUS = {
     ),
 }
 CPU_MACHINE_TYPE = "n1-standard-8"  # gpu=false / gpu_num=0
+# ponytail: one ladder (n1-standard, 3.75 GB/vCPU) — memory= picks the smallest
+# size that fits; use machine_type= for highmem/custom shapes if that ever hurts.
+N1_STANDARD_VCPUS = (1, 2, 4, 8, 16, 32, 64, 96)
+N1_GB_PER_VCPU = 3.75
 
 
 @dataclass
@@ -98,6 +102,7 @@ class DsubConfig:
 
     # --- dsub / AoU specific ---
     machine_type: Optional[str] = None  # None -> derived from gpu_type+gpu_num (GPUS)
+    memory: Optional[float] = None  # GB; CPU jobs only -> smallest n1-standard-* that fits
     boot_disk_size: int = 80  # GB; must fit the CUDA image + cloudpathlib cache
     regions: str = "us-central1"
     wait: bool = False  # block until the (single) job finishes; for debugging
@@ -344,6 +349,7 @@ def build_env_pairs(cfg: DsubConfig, project, env_keys=()) -> list[tuple[str, st
 
 def resolve_machine_type(cfg: DsubConfig) -> str:
     """machine_type=None -> derive it from gpu_type+gpu_num, else pass yours through.
+    memory=GB (CPU jobs only) -> smallest n1-standard-* with at least that much RAM.
 
     Batch rejects a mismatched pair server-side (n1-standard-8 + a100 is a 400), so
     deriving is the only way `gpu_type=a100` can work without also knowing GCP's
@@ -351,6 +357,21 @@ def resolve_machine_type(cfg: DsubConfig) -> str:
     """
     if cfg.gpu and cfg.gpu_num > 0 and cfg.gpu_type not in GPUS:
         raise SystemExit(f"unknown gpu_type={cfg.gpu_type!r}; known: {sorted(GPUS)}")
+    if cfg.memory is not None:
+        if cfg.gpu and cfg.gpu_num > 0:
+            raise SystemExit(
+                "memory= is not yet supported for GPU jobs (RAM is fixed by the "
+                "GPU machine type); drop memory= or set gpu=false"
+            )
+        if cfg.machine_type:
+            raise SystemExit("set either memory= or machine_type=, not both")
+        for n in N1_STANDARD_VCPUS:
+            if n * N1_GB_PER_VCPU >= cfg.memory:
+                return f"n1-standard-{n}"
+        raise SystemExit(
+            f"memory={cfg.memory} GB exceeds n1-standard-96 "
+            f"({96 * N1_GB_PER_VCPU:g} GB); set machine_type= yourself (e.g. n1-highmem-*)"
+        )
     if cfg.machine_type:
         return cfg.machine_type
     if not (cfg.gpu and cfg.gpu_num > 0):
