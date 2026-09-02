@@ -82,7 +82,7 @@ GPUS = {
     ),
 }
 CPU_MACHINE_TYPE = "n1-standard-8"  # gpu=false / gpu_num=0
-# ponytail: one ladder (n1-standard, 3.75 GB/vCPU) — cpus=/memory= pick the smallest
+# ponytail: one ladder (n1-standard, 3.75 GB/vCPU) — cpu_num=/memory= pick the smallest
 # size that fits both; use machine_type= for highmem/custom shapes if that ever hurts.
 N1_STANDARD_VCPUS = (1, 2, 4, 8, 16, 32, 64, 96)
 N1_GB_PER_VCPU = 3.75
@@ -103,8 +103,8 @@ class DsubConfig:
     # --- dsub / AoU specific ---
     machine_type: Optional[str] = None  # None -> derived from gpu_type+gpu_num (GPUS)
     # CPU jobs only -> smallest n1-standard-* satisfying both (vCPU = hyperthread;
-    # the container sees the whole VM, so os.cpu_count() == cpus)
-    cpus: Optional[int] = None  # vCPUs
+    # the container sees the whole VM, so os.cpu_count() == cpu_num)
+    cpu_num: Optional[int] = None  # vCPUs
     memory: Optional[float] = None  # GB
     boot_disk_size: int = 80  # GB; must fit the CUDA image + cloudpathlib cache
     regions: str = "us-central1"
@@ -352,7 +352,7 @@ def build_env_pairs(cfg: DsubConfig, project, env_keys=()) -> list[tuple[str, st
 
 def resolve_machine_type(cfg: DsubConfig) -> str:
     """machine_type=None -> derive it from gpu_type+gpu_num, else pass yours through.
-    cpus=N / memory=GB (CPU jobs only) -> smallest n1-standard-* satisfying both.
+    cpu_num=N / memory=GB (CPU jobs only) -> smallest n1-standard-* satisfying both.
 
     Batch rejects a mismatched pair server-side (n1-standard-8 + a100 is a 400), so
     deriving is the only way `gpu_type=a100` can work without also knowing GCP's
@@ -360,19 +360,19 @@ def resolve_machine_type(cfg: DsubConfig) -> str:
     """
     if cfg.gpu and cfg.gpu_num > 0 and cfg.gpu_type not in GPUS:
         raise SystemExit(f"unknown gpu_type={cfg.gpu_type!r}; known: {sorted(GPUS)}")
-    if cfg.cpus is not None or cfg.memory is not None:
+    if cfg.cpu_num is not None or cfg.memory is not None:
         if cfg.gpu and cfg.gpu_num > 0:
             raise SystemExit(
-                "cpus=/memory= are not yet supported for GPU jobs (both are fixed by "
+                "cpu_num=/memory= are not yet supported for GPU jobs (both are fixed by "
                 "the GPU machine type); drop them or set gpu=false"
             )
         if cfg.machine_type:
-            raise SystemExit("set either cpus=/memory= or machine_type=, not both")
+            raise SystemExit("set either cpu_num=/memory= or machine_type=, not both")
         for n in N1_STANDARD_VCPUS:
-            if n >= (cfg.cpus or 0) and n * N1_GB_PER_VCPU >= (cfg.memory or 0):
+            if n >= (cfg.cpu_num or 0) and n * N1_GB_PER_VCPU >= (cfg.memory or 0):
                 return f"n1-standard-{n}"
         raise SystemExit(
-            f"cpus={cfg.cpus} memory={cfg.memory} exceeds n1-standard-96 "
+            f"cpu_num={cfg.cpu_num} memory={cfg.memory} exceeds n1-standard-96 "
             f"(96 vCPU / {96 * N1_GB_PER_VCPU:g} GB); set machine_type= yourself"
         )
     if cfg.machine_type:
