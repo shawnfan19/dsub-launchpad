@@ -25,12 +25,21 @@ bakes the mandatory `--project / --user-project / --service-account / --network 
 
 ## Install
 
-**On the Workbench** (the terminal can reach github):
-```bash
-pip install git+https://github.com/shawnfan19/dsub-launchpad
-echo 'alias submit=dsubmit' >> ~/.bashrc   # so you type `submit`, same as SLURM
-```
-`dsubmit` is the console script; the alias makes the *command* identical to the cluster.
+**On the Workbench.** A new Jupyter app starts with a blank disk (pip/pipx installs and
+`~/.bashrc` don't survive app deletion), but workspace Git repositories are cloned into
+`~/repos` of every app created after you attach them. So:
+
+1. **Once per workspace:** attach this repo (and `delphi`) under *Apps → Git repositories*.
+2. **Once per new app:**
+   ```bash
+   bash ~/repos/dsub-launchpad/workbench-setup.sh
+   ```
+   It pipx-installs the pinned `dsub050`/`dstat050`/`ddel050` (see *Why `dsub050`* above),
+   editable-installs every Python package in `~/repos` (this one included), and adds
+   `alias submit=dsubmit` to `~/.bashrc` so you type `submit`, same as SLURM. Safe to re-run.
+
+`.env` is gitignored, so it is not in the clone; restore it yourself (e.g. from the
+workspace bucket — which your collaborators can read, so mind the wandb key).
 
 **On the SLURM cluster** (for `--dry` debugging only; coexists with the SLURM `submit`):
 ```bash
