@@ -35,6 +35,7 @@ bakes the mandatory `--project / --user-project / --service-account / --network 
    bash ~/repos/dsub-launchpad/workbench-setup.sh
    ```
    It pipx-installs the pinned `dsub050`/`dstat050`/`ddel050` (see *Why `dsub050`* above),
+   patches its deleted helper-image pin (unpatched, every job dies in ~40s with no logs),
    editable-installs every Python package in `~/repos` (this one included), and adds
    `alias submit=dsubmit` to `~/.bashrc` so you type `submit`, same as SLURM. Safe to re-run.
 
